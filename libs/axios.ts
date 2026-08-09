@@ -6,20 +6,24 @@ import axios, {
 import { tokenStore } from "../utils/token";
 import type { RefreshResponse } from "@/types/auth";
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api/auth";
+// Root API URL — har module (auth, brand, category, product) isi ek instance
+// ko use karega, apna path khud prefix karega. e.g.:
+//   authService    -> api.post("/auth/login")
+//   brandService   -> api.get("/brands")
+//   categoryService-> api.get("/categories")
+//   productService -> api.get("/products")
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000/api/auth";
 
-// Requests that must NOT trigger the refresh-and-retry flow,
-// otherwise a failed login could loop forever trying to "refresh".
-const AUTH_EXEMPT_PATHS = ["/login", "/signup", "/refresh-token"];
+// Refresh-loop se exempt paths (poora path likhna hai, kyunke ab baseURL root hai)
+const AUTH_EXEMPT_PATHS = ["/auth/login", "/auth/signup", "/auth/refresh-token"];
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
-  withCredentials: true, // required so the httpOnly refresh cookie is sent
+  withCredentials: true, // httpOnly refresh cookie bhejne ke liye zaroori
   headers: { "Content-Type": "application/json" },
 });
 
-// ---- Request interceptor: attach access token ----
+// ---- Request interceptor: access token attach ----
 api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
   const token = tokenStore.get();
   if (token) {
@@ -30,19 +34,17 @@ api.interceptors.request.use((config: InternalAxiosRequestConfig) => {
 
 // ---- Response interceptor: silent refresh on expired access token ----
 
-// Extend AxiosRequestConfig so we can mark a request as "already retried"
 interface RetryableRequestConfig extends AxiosRequestConfig {
   _retry?: boolean;
 }
 
-// If multiple requests 401 at the same time, only refresh once and
-// let the others wait on the same in-flight promise.
+// Ek waqt me sirf ek hi refresh call ho — baaki requests usi promise pe wait karein
 let refreshPromise: Promise<string | null> | null = null;
 
 async function performRefresh(): Promise<string | null> {
   if (!refreshPromise) {
     refreshPromise = api
-      .post<RefreshResponse>("/refresh-token")
+      .post<RefreshResponse>("/auth/refresh-token")
       .then((res) => {
         const newToken = res.data.accessToken;
         tokenStore.set(newToken);
@@ -81,8 +83,7 @@ api.interceptors.response.use(
         return api(originalRequest);
       }
 
-      // Refresh failed -> session is truly dead. Let the caller/UI handle
-      // redirecting to /login; we just make sure local state is clean.
+      // Refresh fail -> session dead. Caller/UI /login pe redirect karega.
       tokenStore.clear();
     }
 
